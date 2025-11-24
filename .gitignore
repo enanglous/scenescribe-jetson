@@ -17,3 +17,6 @@ openai/
 recorded_audio.wav
 output.wav
 test.jpg
+conversation_logs/
+.vscode/
+tests/ollama-testing/

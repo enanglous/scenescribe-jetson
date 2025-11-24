@@ -14,7 +14,7 @@ import joblib
 import firebase_admin
 from firebase_admin import db
 from openai import OpenAI
-from picamera2 import Picamera2
+# from picamera2 import Picamera2
 import speech_recognition as sr
 import whisper
 from dotenv import load_dotenv
@@ -28,7 +28,7 @@ from ..lib.agents import Agents
 
 import logging
 # Define the log file path
-log_file = '/home/scenescribe/Desktop/scenescribe/error.log'
+log_file = '/home/scenescribe/scenescribe/error.log'
 
 # Clear the log file if it exists
 if os.path.exists(log_file):
@@ -79,7 +79,7 @@ class SceneScribe:
         self.language = language
         self.setup_environment()
         self.load_models()
-        self.initialize_camera()
+        # self.initialize_camera()
         # self.initialize_firebase()
         
         # Initialize conversation history
@@ -90,7 +90,7 @@ class SceneScribe:
         
         # Initialize utility functions and agents
         self.utils = Utils(
-            picamera=self.picamera,
+            # picamera=self.picamera,
             recognizer=self.recognizer,
             whisper_model=self.whisper_model,
             openai_client=self.openai,
@@ -131,8 +131,8 @@ class SceneScribe:
         self.openai = OpenAI(api_key=self.openai_key)
         
         # Load classification model and vectorizer
-        self.loaded_model = joblib.load("/home/scenescribe/Desktop/scenescribe/models/nb_classifier_3_classes_v2.pkl")
-        self.loaded_vectorizer = joblib.load("/home/scenescribe/Desktop/scenescribe/models/vectorizer_3_classes_v2.pkl")
+        self.loaded_model = joblib.load("/home/scenescribe/scenescribe/models/nb_classifier_3_classes_v2.pkl")
+        self.loaded_vectorizer = joblib.load("/home/scenescribe/scenescribe/models/vectorizer_3_classes_v2.pkl")
         
         # Initialize speech recognition components
         self.recognizer = sr.Recognizer()
@@ -158,7 +158,7 @@ class SceneScribe:
         """Initialize Firebase for real-time database access"""
         logging.info("Initializing Firebase...")
         
-        cred_obj = firebase_admin.credentials.Certificate('/home/scenescribe/Desktop/scenescribe/credentials/credentials.json')
+        cred_obj = firebase_admin.credentials.Certificate('/home/scenescribe/scenescribe/credentials/credentials.json')
         firebase_admin.initialize_app(cred_obj, {
             'databaseURL': 'https://scenescribe-d4be0-default-rtdb.asia-southeast1.firebasedatabase.app'
         })
@@ -177,10 +177,10 @@ class SceneScribe:
         """
         logging.info("Capturing image for scene explanation...")
         img_path = self.utils.get_image()
-        base64_image = self.utils.encode_image(img_path)
+        # base64_image = self.utils.encode_image(img_path)
         
         logging.info("Processing with Agent 1...")
-        agent_1_output = self.agents.explanation_agent_1(base64_image, user_input)
+        agent_1_output = self.agents.explanation_agent_1(img_path, user_input)
         logging.info(f"Agent 1 Output: {agent_1_output}")
         
         logging.info("Processing with Agent 2...")
@@ -201,10 +201,10 @@ class SceneScribe:
         """
         logging.info("Capturing image for educational explanation...")
         img_path = self.utils.get_image()
-        base64_image = self.utils.encode_image(img_path)
+        # base64_image = self.utils.encode_image(img_path)
         
         logging.info("Processing with Agent 1...")
-        agent_1_output = self.agents.educational_agent_1(base64_image, user_input)
+        agent_1_output = self.agents.educational_agent_1(img_path, user_input)
         logging.info(f"Agent 1 Output: {agent_1_output}")
         
         logging.info("Processing with Agent 2...")
@@ -225,10 +225,10 @@ class SceneScribe:
         """
         logging.info("Capturing image for navigation...")
         img_path = self.utils.get_image()
-        base64_image = self.utils.encode_image(img_path)
+        # base64_image = self.utils.encode_image(img_path)
         
         logging.info("Processing with Navigation Agent 1...")
-        agent_1_output = self.agents.navigation_agent_1(base64_image, user_input)
+        agent_1_output = self.agents.navigation_agent_1(img_path, user_input)
         logging.info(f"Navigation Agent 1 Output: {agent_1_output}")
         
         logging.info("Processing with Navigation Agent 2...")

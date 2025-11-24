@@ -3,7 +3,7 @@ import sys
 import cv2
 import os
 import base64
-from picamera2 import Picamera2, Preview
+# from picamera2 import Picamera2, Preview
 import pyttsx3
 import speech_recognition as sr
 import base64
@@ -31,10 +31,10 @@ import scipy.io.wavfile as wavfile
 import requests
 import socket
 
-cred_obj = firebase_admin.credentials.Certificate('credentials/credentials.json')
-default_app = firebase_admin.initialize_app(cred_obj, {
-    'databaseURL':'https://scenescribe-d4be0-default-rtdb.asia-southeast1.firebasedatabase.app'
-    })
+# cred_obj = firebase_admin.credentials.Certificate('credentials/credentials.json')
+# default_app = firebase_admin.initialize_app(cred_obj, {
+#     'databaseURL':'https://scenescribe-d4be0-default-rtdb.asia-southeast1.firebasedatabase.app'
+#     })
 
 
 
@@ -74,25 +74,25 @@ class SharedState:
 
 
 class Utils:
-    def __init__(self, picamera=None, recognizer=None, whisper_model=None, openai_client=None, shared_state: SharedState = None):
+    def __init__(self, recognizer=None, whisper_model=None, openai_client=None, shared_state: SharedState = None):
         self.latest_video_path = None
-        self.picam2 = picamera if picamera else Picamera2()
+        # self.picam2 = picamera if picamera else Picamera2()
         self.recognizer = recognizer if recognizer else sr.Recognizer()
         self.whisper_model = whisper_model if whisper_model else whisper.load_model("tiny")
         self.openai = openai_client
         self.shared_state = shared_state if shared_state else SharedState()
 
-    def encode_image(self,image_path):
-        with open(image_path, "rb") as image_file:
-            return base64.b64encode(image_file.read()).decode('utf-8')
+    # def encode_image(self,image_path):
+    #     with open(image_path, "rb") as image_file:
+    #         return base64.b64encode(image_file.read()).decode('utf-8')
 
     def get_image(self):
-        image_path = "/home/scenescribe/Desktop/scenescribe/test.jpg"
-        self.picam2.capture_file(image_path)
+        image_path = "/home/scenescribe/scenescribe/tests/ollama-testing/scenescribe_board.jpg"
+        # self.picam2.capture_file(image_path)
         return image_path
 
     def record_video_from_camera(self, duration=5, fps=2, output_filename="video_smolvlm.avi",
-                                  resolution=(640, 640), video_dir="/home/scenescribe/Desktop/scenescribe/avis"):
+                                  resolution=(640, 640), video_dir="/home/scenescribe/scenescribe/avis"):
         """
         Records video from a pre-initialized Picamera2 object.
 
@@ -260,33 +260,63 @@ class Utils:
         print("✅ Noise reduction complete.")
 
     # --- Unified Recording Function ---
-    def record_with_softap_control(self, output_path="recorded_audio.wav", sample_rate=16000, frame_duration=30):
+    def record_with_softap_control(self, filename="recorded_audio.wav", sample_rate=16000, frame_duration=30):
         print("🔁 Waiting for softAP button to turn ON...")
-
-        # Wait for button ON
-        while not self.shared_state.get_button_state():
+        
+        print("Press d to start recording..")
+        while True:
+            key = input()
+            if key.lower() == 'd':
+                break
             time.sleep(0.1)
+    
+        # List to store audio chunks
+        audio_chunks = []
+        
+        # Flag to control recording
+        recording = True
+        
+        def callback(indata, frames, time, status):
+            """Callback function to process audio chunks"""
+            if status:
+                print(status)
+            audio_chunks.append(indata.copy())
+        
+        # Start recording in a separate thread
+        stream = sd.InputStream(
+            samplerate=sample_rate,
+            channels=1,
+            dtype='int16',
+            callback=callback,
+            blocksize=1024,  # Adjust block size as needed
+        )
+        
+        print("Press d to stop recording..")
+        
+        with stream:
+            while True:
+                key = input()
+                if key.lower() == 'd':
+                    break
+                time.sleep(0.1)
+        
+        print("Recording stopped.")
+        
+        # Combine all audio chunks
+        if audio_chunks:
+            audio_data = np.vstack(audio_chunks)
+            
+            # Save as WAV file
+            wavfile.write(filename, sample_rate, audio_data)
+            print(f"Audio saved as: {filename}")
+            print(f"Recording duration: {len(audio_data) / sample_rate:.2f} seconds")
+        else:
+            print("No audio data recorded.")
+        
 
-        print("🎙️ Recording started...")
-        buffer = []
+        self.denoise_wav(filename)
 
-        with sd.InputStream(samplerate=sample_rate, channels=1, dtype=np.int16) as stream:
-            while self.shared_state.get_button_state():
-                audio_frame, _ = stream.read(int(sample_rate * frame_duration / 1000))
-                buffer.append(audio_frame)
-
-        print("⏹️ Recording stopped. Saving...")
-
-        audio_data = np.concatenate(buffer, axis=0)
-        with wave.open(output_path, 'wb') as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(sample_rate)
-            wf.writeframes(audio_data.tobytes())
-
-        self.denoise_wav(output_path)
-
-        print(f"✅ Finished. Audio saved and denoised at: {output_path}")
+        print(f"✅ Finished. Audio saved and denoised at: {filename}")
 
 def check_network_connection(host="8.8.8.8", port=53, timeout=3):
     """

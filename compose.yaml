@@ -1,0 +1,14 @@
+name: 'scenescribe'
+services:
+  scenescribe:
+    tty: true
+    stdin_open: true
+    image: scenescribe
+    devices:
+      - "/dev/snd:/dev/snd"
+    # For Pulse Audio
+    volumes:
+      - "/run/user/1000/pulse:/run/user/1000/pulse"
+    environment:
+      - PULSE_SERVER=unix:/run/user/1000/pulse/native
+    init: true

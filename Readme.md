@@ -7,7 +7,7 @@ source /home/scenescribe/Desktop/scenescribe/openai/bin/activate
 cd /home/scenescribe/Desktop/scenescribe
 
 <!-- run your flask application -->
-pyhton -m src.flask_backend.websockets_backend
+python -m src.flask_backend.websockets_backend
 
 
 <!-- logs will appear, follow up to see any potential warning or errors -->
