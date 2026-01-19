@@ -1,5 +1,5 @@
 
-from openai import OpenAI
+# from openai import OpenAI
 import logging
 import sys
 import cv2
@@ -30,10 +30,13 @@ from dotenv import load_dotenv
 import noisereduce as nr
 import scipy.io.wavfile as wavfile
 import requests
-from datetime import datetime #mod
+from datetime import datetime
 import json
-import ollama
+from ollama import Client
 
+ollama = Client( #changing for cloud calls
+  host='http://192.168.43.72:11434',
+)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 conversation_history = [{
@@ -70,49 +73,68 @@ class FileLogger:
         
         logging.info(f"Logged interaction with {agent_name}")
 
-    def save_image(self, img_path, filename):
+    def save_image(self, image_base64, filename):
+        """Save base64 image to file"""
         try:
-            # if ',' in img_path:
-            #     img_path = img_path.split(',')[1]
-            # image_data = base64.b64decode(img_path)
+            # Remove data URL prefix if present
+            if ',' in image_base64:
+                image_base64 = image_base64.split(',')[1]
+            
+            image_data = base64.b64decode(image_base64)
             image_path = os.path.join(self.session_dir, filename)
-            with open(img_path, 'rb') as f:
-                image_data = f.read()
+            
             with open(image_path, 'wb') as f:
                 f.write(image_data)
+            
+            logging.info(f"Image saved: {image_path}")
             return image_path
         except Exception as e:
             logging.error(f"Error saving image: {e}")
             return None
-
+        
+    def save_audio(self, audio_data, filename):
+        """Save audio data to file"""
+        try:
+            audio_path = os.path.join(self.session_dir, filename)
+            # Assuming audio_data is in a writable format
+            with open(audio_path, 'wb') as f:
+                f.write(audio_data)
+            logging.info(f"Audio saved: {audio_path}")
+            return audio_path
+        except Exception as e:
+            logging.error(f"Error saving audio: {e}")
+            return None
+        
 # Initialize file logger
 file_logger = FileLogger()
 
 class Agents:
-    def __init__(self,openai_client=None, conversation_history=None,language="Urdu"):
+    def __init__(self, openai_client=None, conversation_history=None, language="Urdu"):
         self.openai = openai_client
         if self.openai is None:
             logging.error("OpenAI client is not initialized.")
         self.conversation_history = conversation_history
         self.language = language
-        self.file_logger = file_logger  # Added this line
+        self.ollama_model = 'gemma3:4b'
+        self.file_logger = file_logger
 
     def _generate_image_filename(self, agent_name):
         """Generate unique filename for images"""
         timestamp = datetime.now().strftime("%H%M%S")
         return f"{agent_name}_{timestamp}.jpg"
 
-    def explanation_agent_1(self, img_path, user_input):
+    def explanation_agent_1(self, image_base64, user_input):
         # Customize the prompt for Agent 1
-        prompt = f"""
+        system_prompt = f"""
         I am visually disabled. You are an
         assistant for individuals with visual disability. Your role is
         to provide helpful information and assistance based on my
-        query. Your task is to {user_input}. Don’t mention that I
+        query. Don’t mention that I
         am visually disabled or extra information to offend me. Be
         straightforward with me in communicating and don’t add any
         future required output, tell me what asked only
         """
+        prompt = f"Your task is to {user_input}"
         # messages = {
         #             "role": "user",
         #             "content": [
@@ -121,20 +143,26 @@ class Agents:
         #             ]
         #         }
         
-        with open(img_path, 'rb') as file:
-            messages = {
+        # with open(image_base64, 'rb') as file:
+        messages = [
+            {
+                'role': 'system',
+                'content': system_prompt
+            },
+            {
                 'role': 'user',
                 'content': prompt,
-                'images': [file.read()],
+                'images': [image_base64]
             }
+        ]
         
         temp_history = copy.deepcopy(conversation_history)
-        temp_history.append(messages)
+        temp_history.extend(messages)
         # print(temp_history)
         print("Content Prepared")
         # Call OpenAI API with image and text input, including conversation history
         completion = ollama.chat(
-                    model='gemma3:custom',
+                    model=self.ollama_model,
                     messages=temp_history,
                 )
                 
@@ -144,7 +172,7 @@ class Agents:
          # === ADDED THESE LINES ===
         image_filename = self._generate_image_filename("explanation_agent_1")
         input_data = {"user_input": user_input, "image_provided": True}
-        self.file_logger.save_to_log("explanation_agent_1", input_data, response_content, img_path, image_filename)
+        self.file_logger.save_to_log("explanation_agent_1", input_data, response_content, image_base64, image_filename)
         # ======================
 
         # converter.say(response_content)
@@ -167,7 +195,7 @@ class Agents:
         category so he felt disabled for not able to judge itself. since
         he’s blind so don’t start like this image or in the image and
         remove extra information that is not required to tell the blind.
-        don’t add information by which I had to use my eyes and I
+        don’t add information by which I feel like I have to use my eyes and I
         feel disabled. Scene Description: {agent_1_output}.
         """
         messages = {'role': 'user', 'content': prompt}
@@ -179,7 +207,7 @@ class Agents:
         # Call OpenAI API with image and text input, including conversation history
         conversation_history.append(messages_)
         completion = ollama.chat(
-                    model='gemma3:custom',
+                    model=self.ollama_model,
                     messages=temp_history,
                 )
         output = completion['message']['content']
@@ -196,7 +224,7 @@ class Agents:
         # converter.runAndWait()
         return output
 
-    def navigation_agent_1(self,img_path, user_input):
+    def navigation_agent_1(self, image_base64, user_input):
         # Customize the prompt for Agent 1
         prompt = f"""Provide valid json output. I am visually disabled. You are an
         navigation assistant for individuals with visual disability. Your role is
@@ -217,17 +245,17 @@ class Agents:
         #             ]
         #         }]
         
-        with open(img_path, 'rb') as file:
-            messages = [{
-                'role': 'user',
-                'content': prompt,
-                'images': [file.read()],
-            }]
+        # with open(img_path, 'rb') as file:
+        messages = [{
+            'role': 'user',
+            'content': prompt,
+            'images': [image_base64],
+        }]
 
         print("Content Prepared")
         # Call OpenAI API with image and text input, including conversation history
         completion = ollama.chat(
-                    model="gemma3:custom",
+                    model=self.ollama_model,
                     format="json",
                     messages=messages
                 )
@@ -237,7 +265,7 @@ class Agents:
         # === ADDED THESE LINES ===
         image_filename = self._generate_image_filename("navigation_agent_1")
         input_data = {"user_input": user_input, "image_provided": True}
-        self.file_logger.save_to_log("navigation_agent_1", input_data, response_content, img_path, image_filename)
+        self.file_logger.save_to_log("navigation_agent_1", input_data, response_content, image_base64, image_filename)
         # ======================
         # converter.say(response_content)
         # converter.runAndWait()
@@ -266,7 +294,7 @@ class Agents:
         print("Content Prepared")
         # Call OpenAI API with image and text input, including conversation history
         completion = ollama.chat(
-                    model="gemma3:custom",
+                    model=self.ollama_model,
                     messages=messages
                 )
         output = completion['message']['content']
@@ -304,7 +332,7 @@ class Agents:
         # print("Content Prepared")
         # Call OpenAI API with image and text input, including conversation history
         completion = ollama.chat(
-                    model="gemma3:custom",
+                    model=self.ollama_model,
                     messages=messages
                 )
 
