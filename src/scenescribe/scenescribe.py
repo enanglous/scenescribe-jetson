@@ -9,10 +9,10 @@ scene descriptions and navigation assistance to visually impaired users.
 import os
 import sys
 import time
-import threading
+# import threading
 import joblib
-import firebase_admin
-from firebase_admin import db
+# import firebase_admin
+# from firebase_admin import db
 from openai import OpenAI
 # from picamera2 import Picamera2
 import speech_recognition as sr
@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 import signal
 import logging
 import sys
+import cv2
 import time
 # Import our modules
 from ..lib.utils import SharedState, Utils, check_network_connection
@@ -79,6 +80,7 @@ class SceneScribe:
         self.language = language
         self.setup_environment()
         self.load_models()
+        self.vidStream = self.initialize_camera_with_gst(device_id=0)
         # self.initialize_camera()
         # self.initialize_firebase()
         
@@ -94,7 +96,8 @@ class SceneScribe:
             recognizer=self.recognizer,
             whisper_model=self.whisper_model,
             openai_client=self.openai,
-            shared_state = self.sharedState, 
+            shared_state = self.sharedState,
+            vidStream=self.vidStream
         )
         
         self.agents = Agents(
@@ -140,30 +143,57 @@ class SceneScribe:
         
         logging.info("Models loaded successfully")
     
-    def initialize_camera(self):
-        """Initialize PiCamera2 for capturing images and video"""
-        logging.info("Initializing Camera...")
+    # def initialize_camera(self):
+    #     """Initialize PiCamera2 for capturing images and video"""
+    #     logging.info("Initializing Camera...")
         
-        self.picamera = Picamera2()
-        # camera_config = picam2.create_preview_configuration(main={"size": (1920, 1080)})
-        # picam2.configure(camera_config)
-        self.picamera.start()
-        time.sleep(0.1)
-        # picam2.set_controls({"AfMode": 2})
-        # picam2.set_controls({"AfTrigger": 0})
+    #     self.picamera = Picamera2()
+    #     # camera_config = picam2.create_preview_configuration(main={"size": (1920, 1080)})
+    #     # picam2.configure(camera_config)
+    #     self.picamera.start()
+    #     time.sleep(0.1)
+    #     # picam2.set_controls({"AfMode": 2})
+    #     # picam2.set_controls({"AfTrigger": 0})
         
-        logging.info("Camera Initialized")
+    #     logging.info("Camera Initialized")
     
-    def initialize_firebase(self):
-        """Initialize Firebase for real-time database access"""
-        logging.info("Initializing Firebase...")
+    
+    def initialize_camera_with_gst(self, device_id=0, width=1920, height=1080):
+        """Initialise camera for capturing images and video"""
+        logging.info("Initializing Camera...")
+
+        gst_pipeline = (
+            f"v4l2src device=/dev/video{device_id} ! "
+            f"image/jpeg, width={width}, height={height}, framerate=30/1 ! "
+            "nvv4l2decoder mjpeg=1 ! "
+            "nvvidconv ! "
+            "video/x-raw, format=BGRx ! "
+            "videoconvert ! "
+            "video/x-raw, format=BGR ! "
+            "appsink drop=True"
+        )
+
+        cap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
+        if cap.isOpened():
+            for _ in range(20):
+                cap.read()
+            logging.info("Camera Initialized")
+            return cap
+        else:
+            logging.info("Camera failed to initialize")
         
-        cred_obj = firebase_admin.credentials.Certificate('/home/scenescribe/scenescribe/credentials/credentials.json')
-        firebase_admin.initialize_app(cred_obj, {
-            'databaseURL': 'https://scenescribe-d4be0-default-rtdb.asia-southeast1.firebasedatabase.app'
-        })
         
-        logging.info("Firebase Initialized")
+
+    # def initialize_firebase(self):
+    #     """Initialize Firebase for real-time database access"""
+    #     logging.info("Initializing Firebase...")
+        
+    #     cred_obj = firebase_admin.credentials.Certificate('/home/scenescribe/scenescribe/credentials/credentials.json')
+    #     firebase_admin.initialize_app(cred_obj, {
+    #         'databaseURL': 'https://scenescribe-d4be0-default-rtdb.asia-southeast1.firebasedatabase.app'
+    #     })
+        
+    #     logging.info("Firebase Initialized")
     
     def process_scene_explanation(self, user_input):
         """
@@ -177,10 +207,10 @@ class SceneScribe:
         """
         logging.info("Capturing image for scene explanation...")
         img_path = self.utils.get_image()
-        # base64_image = self.utils.encode_image(img_path)
+        base64_image = self.utils.encode_image(img_path)
         
         logging.info("Processing with Agent 1...")
-        agent_1_output = self.agents.explanation_agent_1(img_path, user_input)
+        agent_1_output = self.agents.explanation_agent_1(base64_image, user_input)
         logging.info(f"Agent 1 Output: {agent_1_output}")
         
         logging.info("Processing with Agent 2...")
@@ -201,10 +231,10 @@ class SceneScribe:
         """
         logging.info("Capturing image for educational explanation...")
         img_path = self.utils.get_image()
-        # base64_image = self.utils.encode_image(img_path)
+        base64_image = self.utils.encode_image(img_path)
         
         logging.info("Processing with Agent 1...")
-        agent_1_output = self.agents.educational_agent_1(img_path, user_input)
+        agent_1_output = self.agents.educational_agent_1(base64_image, user_input)
         logging.info(f"Agent 1 Output: {agent_1_output}")
         
         logging.info("Processing with Agent 2...")
@@ -225,10 +255,10 @@ class SceneScribe:
         """
         logging.info("Capturing image for navigation...")
         img_path = self.utils.get_image()
-        # base64_image = self.utils.encode_image(img_path)
+        base64_image = self.utils.encode_image(img_path)
         
         logging.info("Processing with Navigation Agent 1...")
-        agent_1_output = self.agents.navigation_agent_1(img_path, user_input)
+        agent_1_output = self.agents.navigation_agent_1(base64_image, user_input)
         logging.info(f"Navigation Agent 1 Output: {agent_1_output}")
         
         logging.info("Processing with Navigation Agent 2...")
@@ -270,8 +300,12 @@ class SceneScribe:
                 
                 if not user_input:
                     logging.info("No input detected, trying again...")
+                    
                     continue
                 
+                if user_input.lower() == "you":
+                    user_input = "What is written on the signboard"
+
                 logging.info(f"Command received: {user_input}")
                 start_time  = time.time()
                 # Exit condition

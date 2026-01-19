@@ -9,6 +9,7 @@ import speech_recognition as sr
 import base64
 from io import BytesIO
 from PIL import Image
+import io
 import matplotlib.pyplot as plt
 import threading
 import time
@@ -21,9 +22,9 @@ import soundfile as sf
 import sounddevice as sd
 import numpy as np
 import wave
-import webrtcvad
-import firebase_admin
-from firebase_admin import db
+# import webrtcvad
+# import firebase_admin
+# from firebase_admin import db
 from piper.voice import PiperVoice
 from dotenv import load_dotenv
 import noisereduce as nr
@@ -74,21 +75,42 @@ class SharedState:
 
 
 class Utils:
-    def __init__(self, recognizer=None, whisper_model=None, openai_client=None, shared_state: SharedState = None):
+    def __init__(self, vidStream=None, recognizer=None, whisper_model=None, openai_client=None, shared_state: SharedState = None):
         self.latest_video_path = None
         # self.picam2 = picamera if picamera else Picamera2()
         self.recognizer = recognizer if recognizer else sr.Recognizer()
         self.whisper_model = whisper_model if whisper_model else whisper.load_model("tiny")
         self.openai = openai_client
         self.shared_state = shared_state if shared_state else SharedState()
+        self.vidStream = vidStream if vidStream else cv2.VideoCapture(0, cv2.CAP_V4L2)
 
-    # def encode_image(self,image_path):
-    #     with open(image_path, "rb") as image_file:
-    #         return base64.b64encode(image_file.read()).decode('utf-8')
+    def encode_image(self,image_path):
+
+        with Image.open(image_path) as img:
+            # Convert to RGB if necessary
+            if img.mode in ('RGBA', 'P', 'LA'):
+                img = img.convert('RGB')
+        
+            # Save image to bytes buffer
+            buffer = io.BytesIO()
+            img.save(buffer, format='JPEG')
+            buffer.seek(0)
+            
+            # base64 encode
+            image_base64 = base64.b64encode(buffer.read()).decode('utf-8')
+        
+        return image_base64
+        
 
     def get_image(self):
-        image_path = "/home/scenescribe/scenescribe/tests/ollama-testing/scenescribe_board.jpg"
-        # self.picam2.capture_file(image_path)
+        image_path = "/home/scenescribe/Pictures/IMG_1977.jpeg"
+        ret, frame = self.vidStream.read()
+        if ret:
+            # 4. Save the image
+            cv2.imwrite(image_path, frame)
+            print(f"Image successfully saved as {image_path}")
+        else:
+            print("Error: Could not read frame.")
         return image_path
 
     def record_video_from_camera(self, duration=5, fps=2, output_filename="video_smolvlm.avi",
@@ -338,18 +360,22 @@ ground_floor_hierarchical_tree = {
             "Stairs": "Leads to the upper floor"
         },
         "Right Turn": {
-            "Classroom 1": "1st room on the right side",
-            "Industrial Automation Lab": "1st room on the left side",
-            "Robotics Lab": "2nd room on the left side",
-            "HOD Corridor": "on the Straight at the end of the corridor",
-            "Secondary Exit": "on the Right side on end of the corridor"
+            "Right corridor": {
+                "CR MTS 01": "1st room on the right side",
+                "Industrial Automation Lab": "1st room on the left side",
+                "Robotics Lab": "2nd room on the left side",
+                "HOD Corridor": "on the Straight at the end of the corridor",
+                "Secondary Exit": "on the Right side on end of the corridor"
+            }
         },
         "Left Turn": {
-            "CAD/CAM Lab": "1st room on the right side",
-            "Machine Vision Lab": "1st room on the left side",
-            "Electronics Lab": "2nd room on the right side",
-            "Washroom": "on the Left side on the end of the corridor",
-            "Second stairs": "on the Left side on the end of the corridor"
-        },
+            "Left corridor": {
+                "CAD/CAM Lab": "1st room on the right side",
+                "Machine Vision Lab": "1st room on the left side",
+                "Electronics Lab": "2nd room on the right side",
+                "Washroom": "on the Left side on the end of the corridor",
+                "Second stairs": "on the Left side on the end of the corridor"
+            }
+        }
     }
 }
