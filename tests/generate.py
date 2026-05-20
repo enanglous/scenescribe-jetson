@@ -1,15 +1,35 @@
 import ollama
+import io
+from PIL import Image
+import base64
+
+def encode_image(image_path):
+
+        with Image.open(image_path) as img:
+            # Convert to RGB if necessary
+            if img.mode in ('RGBA', 'P', 'LA'):
+                img = img.convert('RGB')
+        
+            # Save image to bytes buffer
+            buffer = io.BytesIO()
+            img.save(buffer, format='JPEG')
+            buffer.seek(0)
+            
+            # base64 encode
+            image_base64 = base64.b64encode(buffer.read()).decode('utf-8')
+        
+        return image_base64
 
 # Initialize conversation history
 conversation_history = []
 
 # First message
-with open('scenescribe_board.jpg', 'rb') as file:
-    conversation_history.append({
-        'role': 'user',
-        'content': 'What is strange about this image?',
-        'images': [file.read()],
-    })
+
+conversation_history.append({
+    'role': 'user',
+    'content': 'What is strange about this image?',
+    'images': [encode_image('tests/ollama-testing/scenescribe_board.jpg')],
+})
 
 response = ollama.chat(
     model='gemma3:4b',

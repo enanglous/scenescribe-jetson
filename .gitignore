@@ -5,7 +5,7 @@ avis/
 openai/
 .env
 *.jpg
-*.wav
+./*.wav
 *avi.
 *.log
 *.cpython-311.pyc
