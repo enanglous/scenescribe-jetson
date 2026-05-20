@@ -35,7 +35,7 @@ import json
 from ollama import Client
 
 ollama = Client( #changing for cloud calls
-  host='http://192.168.43.72:11434',
+  host='http://localhost:11434',
 )
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -115,7 +115,7 @@ class Agents:
             logging.error("OpenAI client is not initialized.")
         self.conversation_history = conversation_history
         self.language = language
-        self.ollama_model = 'gemma3:4b'
+        self.ollama_model = 'gemma4:e2b'
         self.file_logger = file_logger
 
     def _generate_image_filename(self, agent_name):
@@ -164,6 +164,7 @@ class Agents:
         completion = ollama.chat(
                     model=self.ollama_model,
                     messages=temp_history,
+                    think=False,
                 )
                 
         # Get the AI's response content
@@ -209,6 +210,8 @@ class Agents:
         completion = ollama.chat(
                     model=self.ollama_model,
                     messages=temp_history,
+                    think=False,
+
                 )
         output = completion['message']['content']
         conversation_history.append({"role": "assistant", "content": output})

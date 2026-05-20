@@ -31,6 +31,12 @@ import noisereduce as nr
 import scipy.io.wavfile as wavfile
 import requests
 import socket
+import json
+from vosk import Model, KaldiRecognizer
+import queue
+import warnings
+import torch
+
 
 # cred_obj = firebase_admin.credentials.Certificate('credentials/credentials.json')
 # default_app = firebase_admin.initialize_app(cred_obj, {
@@ -64,6 +70,13 @@ class SharedState:
         self.lock = threading.Lock()
         self.button_on = False
 
+        # --- Thread-safe camera sharing ---
+        self.frame_lock = threading.Lock()
+        self.current_frame = None
+
+        # --- Add a TTS lock to prevent concurrent speaker usage ---
+        self.tts_lock = threading.Lock()
+
     def set_button_state(self, state: bool):
         with self.lock:
             self.button_on = state
@@ -75,7 +88,7 @@ class SharedState:
 
 
 class Utils:
-    def __init__(self, vidStream=None, recognizer=None, whisper_model=None, openai_client=None, shared_state: SharedState = None):
+    def __init__(self, vidStream=None, recognizer=None, whisper_model=None, openai_client=None, tts_model=None, tts_sample_rate=None, tts_speaker=None, shared_state: SharedState = None):
         self.latest_video_path = None
         # self.picam2 = picamera if picamera else Picamera2()
         self.recognizer = recognizer if recognizer else sr.Recognizer()
@@ -83,6 +96,9 @@ class Utils:
         self.openai = openai_client
         self.shared_state = shared_state if shared_state else SharedState()
         self.vidStream = vidStream if vidStream else cv2.VideoCapture(0, cv2.CAP_V4L2)
+        self.offline_tts_model = tts_model
+        self.tts_sample_rate = tts_sample_rate
+        self.tts_speaker = tts_speaker
 
     def encode_image(self,image_path):
 
@@ -104,7 +120,13 @@ class Utils:
 
     def get_image(self):
         image_path = "/home/scenescribe/Pictures/IMG_1977.jpeg"
-        ret, frame = self.vidStream.read()
+
+        ret = False
+        with self.shared_state.frame_lock:
+            if self.shared_state.current_frame is not None:
+                frame = self.shared_state.current_frame.copy()
+                ret = True
+        
         if ret:
             # 4. Save the image
             cv2.imwrite(image_path, frame)
@@ -239,29 +261,54 @@ class Utils:
         sd.wait()  # Wait until the audio finishes playing
 
     def openai_convert_and_play_speech(self, text):
-        # Call OpenAI TTS API
-        response = self.openai.audio.speech.create(
-            model="tts-1",  # or "tts-1-hd" for higher quality
-            voice="alloy",  # You can try "echo", "nova", "fable", "shimmer" etc.
-            input=text
-        )
-        # Save the response audio content to a .wav file
-        with open("output.wav", "wb") as f:
-            f.write(response.content)
+        # --- NEW: Thread safe lock wrapper ---
+        # 1. Generate audio with specific speed (lower = slower)
+        # Default is 1.0. Try 0.8 or 0.9 for a calmer navigation pace.
         
-        # Read the generated .wav file and play it through speakers
-        data, samplerate = sf.read("output.wav")
+        with self.shared_state.tts_lock:
+            # # Call OpenAI TTS API
+            # response = self.openai.audio.speech.create(
+            #     model="tts-1",  
+            #     voice="alloy",  
+            #     input=text
+            # )
+            # # Save the response audio content to a .wav file
+            # with open("output.wav", "wb") as f:
+            #     f.write(response.content)
+            
+            # # Read the generated .wav file and play it through speakers
+            # data, samplerate = sf.read("output.wav")
+            # volume_boost = 1.5
+            # data = data * volume_boost
+            # data = data.clip(-1.0, 1.0)
+            
+            # sd.play(data, samplerate)  
+            # sd.wait()
+            
+            ssml_text = f'<speak><prosody rate="slow">{text}</prosody></speak>'
+            with torch.no_grad():
+                audio_tensor = self.offline_tts_model.apply_tts(
+                    ssml_text= ssml_text,
+                    speaker=self.tts_speaker,
+                    sample_rate=self.tts_sample_rate
+                )
 
-        # Increase volume by 1.5x (can go higher with a risk of voice change, but avoid clipping)
-        volume_boost = 1.5
-        data = data * volume_boost
+            # 2. Convert to numpy
+            data = audio_tensor.cpu().numpy()
 
-        # Ensure data doesn't exceed [-1.0, 1.0] range (optional but safe)
-        data = data.clip(-1.0, 1.0)
+            # 3. Increase volume (Bumped to 2.0x for better clarity on the Jetson)
+            volume_boost = 2.0
+            data = data * volume_boost
 
-        # Play
-        sd.play(data, samplerate)  # Play the audio at the same sample rate as the .wav
-        sd.wait()  # Wait until the audio finishes playing
+            # 4. Prevent clipping/distortion
+            data = np.clip(data, -1.0, 1.0)
+
+            # 5. Optional: Save to file (in case you need it for logs)
+            sf.write("output.wav", data, self.tts_sample_rate)
+
+            # 6. Play
+            sd.play(data, self.tts_sample_rate)
+            sd.wait()
 
     def classify_input(self, sentence, loaded_model, loaded_vectorizer):
         sentence_transformed = loaded_vectorizer.transform([sentence])
@@ -283,63 +330,100 @@ class Utils:
 
     # --- Unified Recording Function ---
     def record_with_softap_control(self, filename="recorded_audio.wav", sample_rate=16000, frame_duration=30):
-        print("🔁 Waiting for softAP button to turn ON...")
+        print("Loading voice model...")
+        model_path = "models/vosk-model-small-en-us-0.15"
+        try:
+            model = Model(model_path)
+            rec = KaldiRecognizer(model, sample_rate)
+        except Exception as e:
+            print(f"Failed to load model from {model_path}: {e}")
+            return
+
+        print("🔁 Microphone active. Waiting for 'Hey Glasses' to start recording...")
         
-        print("Press d to start recording..")
-        while True:
-            key = input()
-            if key.lower() == 'd':
-                break
-            time.sleep(0.1)
-    
-        # List to store audio chunks
-        audio_chunks = []
-        
-        # Flag to control recording
-        recording = True
+        q = queue.Queue()
+        audio_chunks = [] 
+        self.is_recording = False 
         
         def callback(indata, frames, time, status):
-            """Callback function to process audio chunks"""
             if status:
-                print(status)
-            audio_chunks.append(indata.copy())
+                print(status, flush=True)
+            q.put(bytes(indata))
         
-        # Start recording in a separate thread
-        stream = sd.InputStream(
+        with sd.RawInputStream(
             samplerate=sample_rate,
             channels=1,
             dtype='int16',
-            callback=callback,
-            blocksize=1024,  # Adjust block size as needed
-        )
-        
-        print("Press d to stop recording..")
-        
-        with stream:
-            while True:
-                key = input()
-                if key.lower() == 'd':
-                    break
-                time.sleep(0.1)
-        
-        print("Recording stopped.")
-        
-        # Combine all audio chunks
-        if audio_chunks:
-            audio_data = np.vstack(audio_chunks)
+            blocksize=4000, 
+            callback=callback
+        ):
             
-            # Save as WAV file
-            wavfile.write(filename, sample_rate, audio_data)
-            print(f"Audio saved as: {filename}")
-            print(f"Recording duration: {len(audio_data) / sample_rate:.2f} seconds")
-        else:
-            print("No audio data recorded.")
+            while True:
+                data = q.get()
+                
+                if self.is_recording:
+                    audio_chunks.append(data)
+                
+                if rec.AcceptWaveform(data):
+                    rec.Result()
+                else:
+                    partial_result = json.loads(rec.PartialResult())
+                    partial_text = partial_result.get("partial", "").lower()
+                    
+                    # --- WAITING FOR WAKE WORD ---
+                    if not self.is_recording:
+                        if "hey glasses" in partial_text:
+                            print("\n✅ 'Hey Glasses' detected! STARTING RECORDING.")
+                            
+                            # --- 🔊 PLAY BEEP ---
+                            # Generate a 0.2 second sine wave at 1000Hz
+                            t = np.linspace(0, 0.2, int(sample_rate * 0.2), endpoint=False)
+                            # Multiply by 10000 for a comfortable volume (max is 32767)
+                            beep = (np.sin(1000 * t * 2 * np.pi) * 10000).astype(np.int16) 
+                            try:
+                                sd.play(beep, samplerate=sample_rate)
+                            except Exception as e:
+                                print(f"Could not play beep: {e}")
+                            # ---------------------
+                                
+                            print("Speak your message, then say 'Stop Listening' to end.")
+                            self.is_recording = True
+                            rec.Reset() 
+                            
+                    # --- ACTIVELY RECORDING ---
+                    else:
+                        if "stop listening" in partial_text:
+                            print("\n🛑 'Stop Listening' detected! STOPPING RECORDING.")
+                            
+                            # Optional: Play a lower pitched beep to indicate stopping
+                            t = np.linspace(0, 0.2, int(sample_rate * 0.2), endpoint=False)
+                            stop_beep = (np.sin(500 * t * 2 * np.pi) * 10000).astype(np.int16)
+                            try:
+                                sd.play(stop_beep, samplerate=sample_rate)
+                            except:
+                                pass
+                                
+                            break 
         
-
-        self.denoise_wav(filename)
-
-        print(f"✅ Finished. Audio saved and denoised at: {filename}")
-
+        print("Recording hardware stopped.")
+        
+        if len(audio_chunks) > 0:
+            combined_bytes = b''.join(audio_chunks)
+            audio_data = np.frombuffer(combined_bytes, dtype=np.int16)
+            
+            if audio_data.size > 0:
+                wavfile.write(filename, sample_rate, audio_data)
+                print(f"Audio saved as: {filename}")
+                print(f"Recording duration: {len(audio_data) / sample_rate:.2f} seconds")
+                
+                if hasattr(self, 'denoise_wav'):
+                    self.denoise_wav(filename)
+                print(f"✅ Finished processing: {filename}")
+            else:
+                print("Error: Audio data was empty after conversion.")
+        else:
+            print("No audio data was recorded between the wake words.")
+        
 def check_network_connection(host="8.8.8.8", port=53, timeout=3):
     """
     Check if the network connection is available.
