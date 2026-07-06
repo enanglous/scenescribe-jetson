@@ -18,6 +18,13 @@ The complete, comprehensive technical documentation, design schematics, implemen
 
 ---
 
+## 📝 To-Do List
+
+- [x] ~~Update `README.md`~~
+- [ ] ~~Update Documentation~~
+- [ ] Refactor Code
+- [ ] Repository Cleanup
+
 ## 🏗️ Architecture Overview
 
 The system processes real-world data across two parallel architectures deployed entirely on-device:
