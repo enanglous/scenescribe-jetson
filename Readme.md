@@ -21,7 +21,7 @@ The complete, comprehensive technical documentation, design schematics, implemen
 ## 📝 To-Do List
 
 - [x] ~~Update `README.md`~~
-- [ ] ~~Update Documentation~~
+- ~~[ ] Update Documentation~~
 - [ ] Refactor Code
 - [ ] Repository Cleanup
 
